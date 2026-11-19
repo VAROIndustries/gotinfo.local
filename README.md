@@ -13,7 +13,15 @@ Built with [Textual](https://textual.textualize.io/) + [psutil](https://psutil.r
 - **Ports tab**: every open TCP/UDP port (listening, bound and connected) with its owning process, rx/tx rate and totals
 - Covers TCP **and UDP** (so QUIC/HTTP3 traffic shows up), IPv4 + IPv6, and connections too short-lived to appear in a poll
 
-## Run
+## Install
+Download `gotinfo.local-Setup-vX.Y.Z.exe` from [Releases](https://github.com/VAROIndustries/gotinfo.local/releases) and run it. It installs per-user, so no admin is needed for the install itself. It adds a Start menu entry and puts `gotinfo` on your PATH. Open a new terminal and run `gotinfo`, then press `a` for an elevated view.
+
+To build the installer yourself, you need PyInstaller and [Inno Setup 6](https://jrsoftware.org/isinfo.php):
+```
+python build.py
+```
+
+## Run from source
 ```
 pip install -r requirements.txt
 python gotinfo.py

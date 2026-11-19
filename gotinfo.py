@@ -41,7 +41,7 @@ def relaunch_as_admin() -> bool:
     """Elevated relaunch; True if UAC accepted. Absolute paths: elevated processes start in System32."""
     frozen = getattr(sys, "frozen", False)
     script = os.path.abspath(sys.argv[0])
-    cwd = os.path.dirname(script)
+    cwd = os.path.dirname(sys.executable if frozen else script)  # frozen argv[0] may be a bare PATH name
     params = "" if frozen else f'"{script}"'
     exe = sys.executable
     wt = shutil.which("wt")
