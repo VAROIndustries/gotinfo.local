@@ -8,6 +8,7 @@ still get NIC totals and the open-port/connection list.
 from __future__ import annotations
 
 import ctypes
+import os
 import socket
 import sys
 import time
@@ -35,10 +36,13 @@ def is_admin() -> bool:
         return False
 
 
-def relaunch_as_admin() -> None:
+def relaunch_as_admin() -> bool:
+    """Elevated relaunch; True if UAC accepted. Absolute paths: elevated processes start in System32."""
     frozen = getattr(sys, "frozen", False)
-    params = "" if frozen else f'"{sys.argv[0]}"'
-    ctypes.windll.shell32.ShellExecuteW(None, "runas", sys.executable, params, None, 1)
+    script = os.path.abspath(sys.argv[0])
+    params = "" if frozen else f'"{script}"'
+    rc = ctypes.windll.shell32.ShellExecuteW(None, "runas", sys.executable, params, os.path.dirname(script), 1)
+    return rc > 32
 
 
 def fmt_bytes(n: float) -> str:
@@ -133,6 +137,10 @@ class DetailScreen(ModalScreen):
             yield DataTable(id="dflows", cursor_type="row", zebra_stripes=True)
         yield Footer()
 
+    def on_data_table_row_selected(self, event):
+        event.stop()  # Enter on a flow row closes, never re-opens a detail screen
+        self.app.pop_screen()
+
     def on_mount(self):
         t = self.query_one("#dflows", DataTable)
         t.add_columns("Proto", "Local", "Remote", "Host", "State", "↓/s", "↑/s", "↓ total", "↑ total")
@@ -164,11 +172,17 @@ class DetailScreen(ModalScreen):
         for (fpid, proto, lport, raddr, rport), tot in app.flow_tot.items():
             if fpid == pid:
                 rows[(proto, lport, raddr, rport)] = ["", tot, app.flow_rate.get((fpid, proto, lport, raddr, rport), (0, 0))]
+        udp_bound = set()
         for c in app.conns:
             if c.pid != pid:
                 continue
+            if proto_of(c) == "UDP":
+                udp_bound.add(c.laddr.port)
             k = (proto_of(c), c.laddr.port, c.raddr.ip if c.raddr else "", c.raddr.port if c.raddr else 0)
             rows.setdefault(k, ["", (0, 0), (0, 0)])[0] = c.status if c.status != "NONE" else "bound"
+        for (proto, lport, raddr, _), row in rows.items():  # psutil UDP sockets have no remote; still bound = live
+            if proto == "UDP" and raddr and not row[0] and lport in udp_bound:
+                row[0] = "active"
         t = self.query_one("#dflows", DataTable)
         t.clear()
         for (proto, lport, raddr, rport), (state, (rx, tx), (drx, dtx)) in sorted(rows.items(), key=lambda kv: -sum(kv[1][1])):
@@ -187,6 +201,7 @@ class GotInfo(App):
         Binding("1", "tab('procs')", "Processes"),
         Binding("2", "tab('ports')", "Ports"),
         Binding("s", "sort", "Sort"),
+        Binding("c", "closed", "Hide/show closed"),
         Binding("enter", "detail", "Details", show=True),
         Binding("a", "admin", "Run as admin", show=not is_admin()),
         Binding("r", "reset", "Reset totals"),
@@ -199,6 +214,7 @@ class GotInfo(App):
         self.trace = NetTrace(self.ledger)
         self.traced = is_admin() and self.trace.start()
         self.sort = 0
+        self.hide_closed = False
         self.pid_tot, self.pid_rate, self.flow_tot, self.flow_rate = {}, {}, {}, {}
         self.port_prev, self.conns = {}, []
         self.prev_t = time.monotonic()
@@ -273,14 +289,16 @@ class GotInfo(App):
                 cur = t.coordinate_to_cell_key(t.cursor_coordinate).row_key.value
             except Exception:
                 pass
+        sx, sy = t.scroll_x, t.scroll_y
         t.clear()
         for key, cells in rows:
             t.add_row(*cells, key=key)
         if cur is not None:
             try:
-                t.move_cursor(row=t.get_row_index(cur), animate=False)
+                t.move_cursor(row=t.get_row_index(cur), scroll=False)
             except Exception:
                 pass
+        t.scroll_to(sx, sy, animate=False)  # keep the user's wheel position across the 1s rebuild
 
     def fill_procs(self):
         nconn = defaultdict(int)
@@ -311,6 +329,8 @@ class GotInfo(App):
         for k in set(state) | set(ports):
             proto, lport, pid = k
             s = state.get(k)
+            if s is None and self.hide_closed:
+                continue
             if s is None:
                 label, addr = "closed", ""
             else:
@@ -334,6 +354,11 @@ class GotInfo(App):
         self.fill_procs()
         self.fill_ports(REFRESH)
 
+    def action_closed(self):
+        self.hide_closed = not self.hide_closed
+        self.notify(f"Closed ports {'hidden' if self.hide_closed else 'shown'}", timeout=1.5)
+        self.fill_ports(REFRESH)
+
     def action_detail(self):
         tc = self.query_one(TabbedContent)
         t = self.query_one(f"#t{tc.active}", DataTable)
@@ -343,13 +368,17 @@ class GotInfo(App):
         pid = int(key) if tc.active == "procs" else int(key.split("|")[2])
         self.push_screen(DetailScreen(pid))
 
-    def on_data_table_row_selected(self, _event):
-        self.action_detail()
+    def on_data_table_row_selected(self, event):
+        if event.data_table.id in ("tprocs", "tports"):
+            self.action_detail()
 
     def action_admin(self):
-        if not is_admin():
-            relaunch_as_admin()
+        if is_admin():
+            return
+        if relaunch_as_admin():
             self.exit()
+        else:
+            self.notify("Elevation cancelled", severity="warning")
 
     def action_reset(self):
         with self.ledger.lock:

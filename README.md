@@ -25,6 +25,8 @@ python gotinfo.py
 | `1` / `2` | Processes / Ports |
 | `Enter` | Details for the selected process |
 | `s` | Cycle sort: ↓/s, ↑/s, ↓ total, ↑ total |
+| `c` | Hide/show closed ports |
+| `a` | Relaunch as admin |
 | `r` | Reset totals |
 | `q` | Quit |
 
