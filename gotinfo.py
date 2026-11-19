@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import ctypes
 import os
+import shutil
 import socket
 import sys
 import time
@@ -40,8 +41,13 @@ def relaunch_as_admin() -> bool:
     """Elevated relaunch; True if UAC accepted. Absolute paths: elevated processes start in System32."""
     frozen = getattr(sys, "frozen", False)
     script = os.path.abspath(sys.argv[0])
+    cwd = os.path.dirname(script)
     params = "" if frozen else f'"{script}"'
-    rc = ctypes.windll.shell32.ShellExecuteW(None, "runas", sys.executable, params, os.path.dirname(script), 1)
+    exe = sys.executable
+    wt = shutil.which("wt")
+    if wt:  # conhost's font lacks the block glyphs the sparklines use; Windows Terminal has them
+        exe, params = wt, f'-d "{cwd}" "{sys.executable}" {params}'
+    rc = ctypes.windll.shell32.ShellExecuteW(None, "runas", exe, params, cwd, 1)
     return rc > 32
 
 
